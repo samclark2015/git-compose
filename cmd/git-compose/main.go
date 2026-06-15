@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/fatih/color"
 	"github.com/getsops/sops/v3/decrypt"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
@@ -35,6 +36,42 @@ const (
 	defaultPollAttempts  = "15"
 	defaultPollInterval  = "2s"
 )
+
+// ---------------------------------------------------------------------------
+// output helpers
+// ---------------------------------------------------------------------------
+
+var (
+	colorSection = color.New(color.FgCyan, color.Bold)
+	colorOK      = color.New(color.FgGreen)
+	colorWarn    = color.New(color.FgYellow)
+	colorFail    = color.New(color.FgRed, color.Bold)
+	colorInfo    = color.New(color.FgWhite)
+)
+
+func section(format string, a ...any) {
+	colorSection.Printf("\n=== "+format+" ===\n", a...)
+}
+
+func step(format string, a ...any) {
+	colorInfo.Printf("--- "+format+" ---\n", a...)
+}
+
+func ok(format string, a ...any) {
+	colorOK.Printf("  ✓ "+format+"\n", a...)
+}
+
+func warn(format string, a ...any) {
+	colorWarn.Fprintf(os.Stderr, "  ⚠ "+format+"\n", a...)
+}
+
+func fail(format string, a ...any) {
+	colorFail.Printf("  ✗ "+format+"\n", a...)
+}
+
+func info(format string, a ...any) {
+	colorInfo.Printf("  "+format+"\n", a...)
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -108,7 +145,7 @@ environment variables:
 // ---------------------------------------------------------------------------
 
 func runReconcile(repoDir string, routesOnly bool) error {
-	fmt.Println("=== Reconciling homelab ===")
+	section("Reconciling homelab")
 
 	caddyAPI := envOr("CADDY_API", defaultCaddyAPI)
 
@@ -124,13 +161,13 @@ func runReconcile(repoDir string, routesOnly bool) error {
 		// install git hooks
 		if err := installHooks(repoDir); err != nil {
 			// non-fatal: warn and continue
-			fmt.Fprintf(os.Stderr, "WARNING: installing hooks: %v\n", err)
+			warn("installing hooks: %v", err)
 		}
 
 		// ensure caddy-net network
 		caddyNet := envOr("CADDY_NET", defaultCaddyNet)
 		if err := ensureNetwork(caddyNet); err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: ensure network: %v\n", err)
+			warn("ensure network: %v", err)
 		}
 
 		// deploy services
@@ -143,12 +180,12 @@ func runReconcile(repoDir string, routesOnly bool) error {
 
 	// wait for Caddy Admin API
 	if err := waitForCaddy(caddyAPI); err != nil {
-		fmt.Fprintf(os.Stderr, "WARNING: Caddy API never became ready: %v\n", err)
+		warn("Caddy API never became ready: %v", err)
 	}
 
 	// build + apply Caddy config
 	if err := applyCaddyRoutes(repoDir, caddyAPI); err != nil {
-		fmt.Fprintf(os.Stderr, "WARNING: applying Caddy routes: %v\n", err)
+		warn("applying Caddy routes: %v", err)
 	}
 
 	if !routesOnly {
@@ -156,13 +193,13 @@ func runReconcile(repoDir string, routesOnly bool) error {
 		pruneImages()
 	}
 
-	fmt.Println("=== Done ===")
+	ok("Done")
 	return nil
 }
 
 // gitSync fetches and hard-resets to origin/main using go-git (no git binary required).
 func gitSync(repoDir string) error {
-	fmt.Println("--- Syncing git ---")
+	step("Syncing git")
 
 	repo, err := gogit.PlainOpen(repoDir)
 	if err != nil {
@@ -207,13 +244,13 @@ func gitSync(repoDir string) error {
 		return fmt.Errorf("git reset --hard: %w", err)
 	}
 
-	fmt.Printf("  HEAD reset to %s\n", ref.Hash())
+	ok("HEAD reset to %s", ref.Hash())
 	return nil
 }
 
 // installHooks copies every file from scripts/hooks/ into .git/hooks/.
 func installHooks(repoDir string) error {
-	fmt.Println("--- Installing git hooks ---")
+	step("Installing git hooks")
 	hooksDir := filepath.Join(repoDir, "scripts", "hooks")
 	entries, err := os.ReadDir(hooksDir)
 	if os.IsNotExist(err) {
@@ -235,14 +272,14 @@ func installHooks(repoDir string) error {
 		if err := os.Chmod(dst, 0o755); err != nil {
 			return err
 		}
-		fmt.Printf("  installed %s\n", e.Name())
+		ok("installed %s", e.Name())
 	}
 	return nil
 }
 
 // ensureNetwork creates the named Docker bridge network if it doesn't exist.
 func ensureNetwork(name string) error {
-	fmt.Printf("--- Ensuring %s network ---\n", name)
+	step("Ensuring %s network", name)
 
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -253,7 +290,7 @@ func ensureNetwork(name string) error {
 	ctx := context.Background()
 	_, err = cli.NetworkInspect(ctx, name, network.InspectOptions{})
 	if err == nil {
-		fmt.Printf("  %s network already exists\n", name)
+		info("%s network already exists", name)
 		return nil
 	}
 	if !client.IsErrNotFound(err) {
@@ -262,30 +299,30 @@ func ensureNetwork(name string) error {
 
 	_, err = cli.NetworkCreate(ctx, name, network.CreateOptions{Driver: "bridge"})
 	if err != nil {
-		fmt.Printf("  WARNING: failed to create %s network\n", name)
+		warn("failed to create %s network", name)
 		return err
 	}
-	fmt.Printf("  %s network created\n", name)
+	ok("%s network created", name)
 	return nil
 }
 
 // pruneImages removes dangling Docker images (equivalent to docker image prune -f).
 func pruneImages() {
-	fmt.Println("--- Pruning dangling images ---")
+	step("Pruning dangling images")
 
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  WARNING: docker client for prune: %v\n", err)
+		warn("docker client for prune: %v", err)
 		return
 	}
 	defer cli.Close()
 
 	report, err := cli.ImagesPrune(context.Background(), filters.Args{})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  WARNING: image prune: %v\n", err)
+		warn("image prune: %v", err)
 		return
 	}
-	fmt.Printf("  reclaimed %d bytes across %d image(s)\n", report.SpaceReclaimed, len(report.ImagesDeleted))
+	ok("reclaimed %d bytes across %d image(s)", report.SpaceReclaimed, len(report.ImagesDeleted))
 }
 
 // deployServices finds all compose.yaml files under repoDir/services, and for
@@ -302,7 +339,7 @@ func deployServices(repoDir string) error {
 	for _, composeFile := range matches {
 		dir := filepath.Dir(composeFile)
 		service := filepath.Base(dir)
-		fmt.Printf("--- %s ---\n", service)
+		step("%s", service)
 
 		secretsEnc := filepath.Join(dir, "secrets.env.enc")
 		secretsPlain := filepath.Join(dir, "secrets.env")
@@ -312,11 +349,11 @@ func deployServices(repoDir string) error {
 			hasSecrets = true
 			data, decErr := decrypt.File(secretsEnc, "dotenv")
 			if decErr != nil {
-				fmt.Printf("!!! %s: failed to decrypt secrets, skipping\n", service)
+				fail("%s: failed to decrypt secrets, skipping", service)
 				continue
 			}
 			if writeErr := os.WriteFile(secretsPlain, data, 0o600); writeErr != nil {
-				fmt.Printf("!!! %s: failed to write secrets.env, skipping\n", service)
+				fail("%s: failed to write secrets.env, skipping", service)
 				continue
 			}
 		}
@@ -330,7 +367,7 @@ func deployServices(repoDir string) error {
 			os.Remove(secretsPlain)
 		}
 		if upErr != nil {
-			fmt.Printf("!!! %s failed to deploy, skipping\n", service)
+			fail("%s: failed to deploy, skipping", service)
 		}
 	}
 	return nil
@@ -364,7 +401,7 @@ func parsePollConfig() pollConfig {
 // waitForCaddy polls the Caddy Admin API until it responds or the attempt
 // limit is reached.
 func waitForCaddy(caddyAPI string) error {
-	fmt.Println("--- Waiting for Caddy Admin API ---")
+	step("Waiting for Caddy Admin API")
 	poll := parsePollConfig()
 	url := caddyAPI + "/config/"
 	for i := 1; i <= poll.attempts; i++ {
@@ -372,11 +409,11 @@ func waitForCaddy(caddyAPI string) error {
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode < 500 {
-				fmt.Println("  Caddy ready")
+				ok("Caddy ready")
 				return nil
 			}
 		}
-		fmt.Printf("  waiting (%d/%d)...\n", i, poll.attempts)
+		info("waiting (%d/%d)...", i, poll.attempts)
 		time.Sleep(poll.interval)
 	}
 	return fmt.Errorf("timed out waiting for Caddy")
@@ -445,7 +482,7 @@ type caddyJSON struct {
 // applyCaddyRoutes reads all caddy*.json files under services/, builds a full
 // Caddy config, and pushes it to the Caddy Admin API via POST /load.
 func applyCaddyRoutes(repoDir, caddyAPI string) error {
-	fmt.Println("--- Applying Caddy routes via API ---")
+	step("Applying Caddy routes via API")
 
 	pattern := filepath.Join(repoDir, "services", "*", "caddy*.json")
 	matches, err := filepath.Glob(pattern)
@@ -458,12 +495,12 @@ func applyCaddyRoutes(repoDir, caddyAPI string) error {
 	for _, f := range matches {
 		data, readErr := os.ReadFile(f)
 		if readErr != nil {
-			fmt.Fprintf(os.Stderr, "  WARNING: reading %s: %v\n", f, readErr)
+			warn("reading %s: %v", f, readErr)
 			continue
 		}
 		var cj caddyJSON
 		if jsonErr := json.Unmarshal(data, &cj); jsonErr != nil {
-			fmt.Fprintf(os.Stderr, "  WARNING: parsing %s: %v\n", f, jsonErr)
+			warn("parsing %s: %v", f, jsonErr)
 			continue
 		}
 		route := caddyRoute{
@@ -515,7 +552,7 @@ func applyCaddyRoutes(repoDir, caddyAPI string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("POST /load returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	fmt.Println("  Caddy routes applied")
+	ok("Caddy routes applied (%d route(s))", len(routes))
 	return nil
 }
 
@@ -533,7 +570,7 @@ func runRegisterRoute(caddyJSONPath, caddyAPI string) error {
 		return fmt.Errorf("parsing %s: %w", caddyJSONPath, err)
 	}
 
-	fmt.Printf("Registering %s → %s (id: %s)\n", cj.Hostname, cj.Upstream, cj.ID)
+	info("Registering %s → %s (id: %s)", cj.Hostname, cj.Upstream, cj.ID)
 
 	// Delete existing route (idempotent; ignore 404)
 	delURL := caddyAPI + "/id/" + cj.ID
@@ -545,9 +582,9 @@ func runRegisterRoute(caddyJSONPath, caddyAPI string) error {
 	delResp.Body.Close()
 	switch delResp.StatusCode {
 	case http.StatusOK:
-		fmt.Println("  Removed existing route")
+		ok("Removed existing route")
 	case http.StatusNotFound:
-		fmt.Println("  No existing route found")
+		info("No existing route found")
 	default:
 		return fmt.Errorf("unexpected DELETE status: %d", delResp.StatusCode)
 	}
@@ -586,7 +623,7 @@ func runRegisterRoute(caddyJSONPath, caddyAPI string) error {
 		body, _ := io.ReadAll(postResp.Body)
 		return fmt.Errorf("unexpected POST status %d: %s", postResp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	fmt.Println("  Created route")
+	ok("Created route")
 	return nil
 }
 
@@ -602,7 +639,7 @@ func runRemoveRoute(routeID, caddyAPI string) error {
 		return fmt.Errorf("DELETE %s: %w", url, err)
 	}
 	defer resp.Body.Close()
-	fmt.Printf("Removed route: %s\n", routeID)
+	ok("Removed route: %s", routeID)
 	return nil
 }
 
