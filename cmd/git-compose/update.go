@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"syscall"
 
 	"git-compose/internal/ui"
 )
@@ -153,4 +154,70 @@ func downloadTo(url string, w io.Writer) error {
 
 	_, err = io.Copy(w, resp.Body)
 	return err
+}
+
+// selfUpdate checks for a newer release, downloads it if available, replaces
+// the running binary, and re-execs the new binary with the same arguments so
+// that the calling reconcile loop runs under the updated version.
+// If githubRepo is unset (dev build) or no update is available, it returns
+// without error and without re-execing.
+func selfUpdate() error {
+	if githubRepo == "" {
+		ui.Warn("skipping auto-update: binary was not built with -X main.githubRepo")
+		return nil
+	}
+
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", githubRepo)
+	release, err := fetchRelease(apiURL)
+	if err != nil {
+		return fmt.Errorf("auto-update: fetch release: %w", err)
+	}
+
+	assetName := fmt.Sprintf("git-compose-%s-%s", runtime.GOOS, runtime.GOARCH)
+	var downloadURL string
+	for _, a := range release.Assets {
+		if a.Name == assetName {
+			downloadURL = a.BrowserDownloadURL
+			break
+		}
+	}
+	if downloadURL == "" {
+		// No asset for this platform — not an error, just skip.
+		ui.Info("auto-update: no asset %q in latest release (%s), skipping", assetName, release.TagName)
+		return nil
+	}
+
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("auto-update: resolve executable: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(os.TempDir(), "git-compose-update-*")
+	if err != nil {
+		return fmt.Errorf("auto-update: create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		tmp.Close()
+		os.Remove(tmpName)
+	}()
+
+	if err := downloadTo(downloadURL, tmp); err != nil {
+		return fmt.Errorf("auto-update: download: %w", err)
+	}
+	tmp.Close()
+
+	if err := os.Chmod(tmpName, 0o755); err != nil {
+		return fmt.Errorf("auto-update: chmod: %w", err)
+	}
+
+	if err := os.Rename(tmpName, self); err != nil {
+		return fmt.Errorf("auto-update: replace binary: %w", err)
+	}
+
+	ui.OK("Updated to %s; re-execing...", release.TagName)
+
+	// Re-exec the new binary with the same args so the reconcile runs on the
+	// updated version. syscall.Exec replaces the current process image.
+	return syscall.Exec(self, os.Args, os.Environ())
 }

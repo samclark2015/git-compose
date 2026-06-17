@@ -15,6 +15,13 @@ import (
 func runReconcile(repoDir string, routesOnly bool, changedOnly bool) error {
 	ui.Section("Reconciling homelab")
 
+	// Auto-update: fetch the latest release and re-exec if a newer binary was
+	// installed. Non-fatal: a warning is printed and reconcile continues if the
+	// update fails (e.g. no network, no matching asset).
+	if err := selfUpdate(); err != nil {
+		ui.Warn("auto-update failed: %v", err)
+	}
+
 	caddyAPI := envOr("CADDY_API", defaultCaddyAPI)
 
 	if !routesOnly {
