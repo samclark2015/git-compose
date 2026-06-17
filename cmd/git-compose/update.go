@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
+	"time"
 
 	"git-compose/internal/ui"
 )
@@ -17,9 +17,9 @@ import (
 // githubRepo is set at build time via -ldflags "-X main.githubRepo=owner/repo".
 var githubRepo string
 
-// commit is the git commit SHA baked in at build time via -ldflags "-X main.commit=<sha>".
+// buildTime is the RFC3339 build timestamp baked in at build time via -ldflags "-X main.buildTime=<time>".
 // Used to detect whether the running binary is already up to date.
-var commit string
+var buildTime string
 
 // updateCmd implements the self-update command.
 type updateCmd struct {
@@ -33,9 +33,9 @@ func (c *updateCmd) Run() error {
 
 // ghRelease is a minimal GitHub Releases API response.
 type ghRelease struct {
-	TagName         string    `json:"tag_name"`
-	TargetCommitish string    `json:"target_commitish"`
-	Assets          []ghAsset `json:"assets"`
+	TagName     string    `json:"tag_name"`
+	PublishedAt string    `json:"published_at"`
+	Assets      []ghAsset `json:"assets"`
 }
 
 type ghAsset struct {
@@ -211,11 +211,11 @@ func selfUpdate() error {
 		return fmt.Errorf("auto-update: fetch release: %w", err)
 	}
 
-	// Skip if the running binary is already at the commit the release tag points to.
-	if commit != "" {
-		refURL := fmt.Sprintf("https://api.github.com/repos/%s/git/ref/tags/%s", githubRepo, release.TagName)
-		tagCommit, err := fetchTagCommit(refURL)
-		if err == nil && strings.HasPrefix(tagCommit, commit) {
+	// Skip if the running binary was built after the release was published.
+	if buildTime != "" && release.PublishedAt != "" {
+		bt, err1 := time.Parse(time.RFC3339, buildTime)
+		rt, err2 := time.Parse(time.RFC3339, release.PublishedAt)
+		if err1 == nil && err2 == nil && !bt.Before(rt) {
 			return nil
 		}
 	}
