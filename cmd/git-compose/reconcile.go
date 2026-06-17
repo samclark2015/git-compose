@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"git-compose/internal/ui"
 
-	gogit "github.com/go-git/go-git/v5"
 	"github.com/getsops/sops/v3/decrypt"
 )
 
@@ -26,9 +26,6 @@ func runReconcile(repoDir string, routesOnly bool, changedOnly bool) error {
 	caddyAPI := envOr("CADDY_API", defaultCaddyAPI)
 
 	if !routesOnly {
-		sopsKeyFile := envOr("SOPS_AGE_KEY_FILE", defaultSopsKeyFile)
-		os.Setenv("SOPS_AGE_KEY_FILE", sopsKeyFile)
-
 		// git sync — capture old HEAD so we can diff what changed
 		oldHead, err := gitSync(repoDir)
 		if err != nil {
@@ -52,16 +49,10 @@ func runReconcile(repoDir string, routesOnly bool, changedOnly bool) error {
 		// services whose files were touched. A nil filter means deploy everything.
 		var serviceFilter map[string]bool
 		if changedOnly {
-			// Resolve current HEAD (post-sync).
-			repo, openErr := gogit.PlainOpen(repoDir)
-			if openErr != nil {
-				return fmt.Errorf("open repo for diff: %w", openErr)
-			}
-			headRef, headErr := repo.Head()
+			newHead, headErr := runOutput(repoDir, "git", "rev-parse", "HEAD")
 			if headErr != nil {
 				return fmt.Errorf("resolve HEAD after sync: %w", headErr)
 			}
-			newHead := headRef.Hash()
 
 			if oldHead == newHead {
 				ui.Info("no new commits; skipping service deployment")
@@ -127,6 +118,11 @@ func deployServices(repoDir string, changedOnly map[string]bool) error {
 	for _, composeFile := range matches {
 		dir := filepath.Dir(composeFile)
 		service := filepath.Base(dir)
+
+		if strings.HasSuffix(service, ".disabled") {
+			ui.Info("%s: disabled (skipping)", service)
+			continue
+		}
 
 		if changedOnly != nil && !changedOnly[service] {
 			continue

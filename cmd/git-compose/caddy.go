@@ -139,6 +139,9 @@ func applyCaddyRoutes(repoDir, caddyAPI string) error {
 
 	var routes []caddyRoute
 	for _, f := range matches {
+		if strings.HasSuffix(filepath.Base(filepath.Dir(f)), ".disabled") {
+			continue
+		}
 		data, readErr := os.ReadFile(f)
 		if readErr != nil {
 			ui.Warn("reading %s: %v", f, readErr)

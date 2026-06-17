@@ -1,130 +1,60 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"git-compose/internal/ui"
-
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing"
-	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	cryptossh "golang.org/x/crypto/ssh"
 )
 
-// gitSync fetches and hard-resets to origin/main using go-git (no git binary required).
-// It returns the HEAD hash that was current before the sync (the "old" HEAD), which
-// callers can use to determine what changed.
-func gitSync(repoDir string) (plumbing.Hash, error) {
+// gitSync fetches and hard-resets to origin/main using the system git binary.
+// SSH authentication is left entirely to the system (SSH agent, ~/.ssh/config,
+// GIT_SSH_COMMAND, etc.). It returns the HEAD hash that was current before the
+// sync so callers can diff old..new.
+func gitSync(repoDir string) (string, error) {
 	ui.Step("Syncing git")
 
-	repo, err := gogit.PlainOpen(repoDir)
+	oldHead, err := runOutput(repoDir, "git", "rev-parse", "HEAD")
 	if err != nil {
-		return plumbing.ZeroHash, fmt.Errorf("open repo: %w", err)
+		return "", fmt.Errorf("git rev-parse HEAD: %w", err)
 	}
 
-	// Capture HEAD before the sync so callers can diff old..new.
-	headRef, err := repo.Head()
+	if err := run(repoDir, "git", "fetch", "origin", "main"); err != nil {
+		return "", fmt.Errorf("git fetch: %w", err)
+	}
+	if err := run(repoDir, "git", "reset", "--hard", "origin/main"); err != nil {
+		return "", fmt.Errorf("git reset --hard: %w", err)
+	}
+
+	newHead, err := runOutput(repoDir, "git", "rev-parse", "HEAD")
 	if err != nil {
-		return plumbing.ZeroHash, fmt.Errorf("resolve HEAD: %w", err)
-	}
-	oldHead := headRef.Hash()
-
-	deployKeyFile := envOr("GIT_DEPLOY_KEY", defaultDeployKeyFile)
-
-	// Build SSH auth from the deploy key file
-	auth, err := gitssh.NewPublicKeysFromFile("git", deployKeyFile, "")
-	if err != nil {
-		return plumbing.ZeroHash, fmt.Errorf("load deploy key %s: %w", deployKeyFile, err)
-	}
-	auth.HostKeyCallback = cryptossh.InsecureIgnoreHostKey() //nolint:gosec
-
-	// Fetch origin/main
-	fetchErr := repo.Fetch(&gogit.FetchOptions{
-		RemoteName: "origin",
-		RefSpecs:   []config.RefSpec{"refs/heads/main:refs/remotes/origin/main"},
-		Auth:       auth,
-		Progress:   os.Stdout,
-	})
-	if fetchErr != nil && !errors.Is(fetchErr, gogit.NoErrAlreadyUpToDate) {
-		return plumbing.ZeroHash, fmt.Errorf("git fetch: %w", fetchErr)
+		return "", fmt.Errorf("git rev-parse HEAD after sync: %w", err)
 	}
 
-	// Resolve origin/main
-	ref, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", "main"), true)
-	if err != nil {
-		return plumbing.ZeroHash, fmt.Errorf("resolve origin/main: %w", err)
-	}
-
-	// Hard reset worktree to that commit
-	wt, err := repo.Worktree()
-	if err != nil {
-		return plumbing.ZeroHash, fmt.Errorf("worktree: %w", err)
-	}
-	if err := wt.Reset(&gogit.ResetOptions{
-		Commit: ref.Hash(),
-		Mode:   gogit.HardReset,
-	}); err != nil {
-		return plumbing.ZeroHash, fmt.Errorf("git reset --hard: %w", err)
-	}
-
-	ui.OK("HEAD reset to %s", ref.Hash())
+	ui.OK("HEAD reset to %s", newHead)
 	return oldHead, nil
 }
 
 // changedServices returns the set of service names (directory names under
 // services/) that have at least one file changed between oldHead and newHead.
-// If the two hashes are identical (already up-to-date), it returns nil, which
-// callers interpret as "nothing changed".
-func changedServices(repoDir string, oldHead, newHead plumbing.Hash) (map[string]bool, error) {
+// Returns nil if the hashes are identical (nothing changed).
+func changedServices(repoDir, oldHead, newHead string) (map[string]bool, error) {
 	if oldHead == newHead {
 		return nil, nil
 	}
 
-	repo, err := gogit.PlainOpen(repoDir)
+	out, err := runOutput(repoDir, "git", "diff", "--name-only", oldHead, newHead)
 	if err != nil {
-		return nil, fmt.Errorf("open repo: %w", err)
-	}
-
-	oldCommit, err := repo.CommitObject(oldHead)
-	if err != nil {
-		return nil, fmt.Errorf("resolve old commit %s: %w", oldHead, err)
-	}
-	newCommit, err := repo.CommitObject(newHead)
-	if err != nil {
-		return nil, fmt.Errorf("resolve new commit %s: %w", newHead, err)
-	}
-
-	oldTree, err := oldCommit.Tree()
-	if err != nil {
-		return nil, fmt.Errorf("old tree: %w", err)
-	}
-	newTree, err := newCommit.Tree()
-	if err != nil {
-		return nil, fmt.Errorf("new tree: %w", err)
-	}
-
-	changes, err := oldTree.Diff(newTree)
-	if err != nil {
-		return nil, fmt.Errorf("diff trees: %w", err)
+		return nil, fmt.Errorf("git diff: %w", err)
 	}
 
 	changed := make(map[string]bool)
-	for _, ch := range changes {
-		// A change has a From and a To path; use whichever is non-empty.
-		for _, p := range []string{ch.From.Name, ch.To.Name} {
-			if p == "" {
-				continue
-			}
-			// Match paths like "services/<name>/..."
-			parts := strings.SplitN(p, "/", 3)
-			if len(parts) >= 2 && parts[0] == "services" && parts[1] != "" {
-				changed[parts[1]] = true
-			}
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(line, "/", 3)
+		if len(parts) >= 2 && parts[0] == "services" && parts[1] != "" {
+			changed[parts[1]] = true
 		}
 	}
 	return changed, nil

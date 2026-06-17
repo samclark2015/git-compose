@@ -5,13 +5,11 @@ import (
 )
 
 const (
-	defaultRepoDir       = "/opt/homelab"
-	defaultCaddyAPI      = "http://127.0.0.1:2019"
-	defaultSopsKeyFile   = "/root/.config/sops/age/keys.txt"
-	defaultDeployKeyFile = "/root/.ssh/gitops_deploy"
-	defaultCaddyNet      = "caddy-net"
-	defaultPollAttempts  = "15"
-	defaultPollInterval  = "2s"
+	defaultRepoDir      = "/opt/homelab"
+	defaultCaddyAPI     = "http://127.0.0.1:2019"
+	defaultCaddyNet     = "caddy-net"
+	defaultPollAttempts = "15"
+	defaultPollInterval = "2s"
 )
 
 // ---------------------------------------------------------------------------

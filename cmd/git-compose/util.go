@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // run executes a command with its stdout/stderr wired to the current process.
@@ -16,6 +18,22 @@ func run(dir string, name string, args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// runOutput executes a command and returns its trimmed stdout as a string.
+// Stderr is wired to the current process. dir may be empty.
+func runOutput(dir string, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(buf.String()), nil
 }
 
 // envOr returns the value of the environment variable key, or fallback if unset.
