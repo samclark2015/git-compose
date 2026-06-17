@@ -149,6 +149,14 @@ func applyCaddyRoutes(repoDir, caddyAPI string) error {
 	}
 
 	caddyServerName := envOr("CADDY_SERVER_NAME", "srv0")
+	caddyHTTPListen := envOr("CADDY_HTTP_LISTEN", ":80")
+
+	// Ensure the server node exists in the JSON config tree before we try to
+	// append routes to it. When Caddy starts from a Caddyfile the adapter
+	// manages config internally and the JSON path may not be traversable.
+	if err := ensureCaddyServer(caddyAPI, caddyServerName, caddyHTTPListen); err != nil {
+		return fmt.Errorf("ensuring Caddy server: %w", err)
+	}
 
 	// Fetch live routes and delete any that carry one of our IDs but are no
 	// longer in the active set.
@@ -170,6 +178,61 @@ func applyCaddyRoutes(repoDir, caddyAPI string) error {
 
 	ui.OK("Caddy routes applied (%d route(s))", len(active))
 	return nil
+}
+
+// ensureCaddyServer checks whether the named server exists in Caddy's JSON
+// config tree and creates it (with an empty routes array) if it does not.
+// This is necessary when Caddy starts from a Caddyfile: the adapter manages
+// the config internally and the apps/http subtree may not be traversable via
+// the config API until we seed it.
+func ensureCaddyServer(caddyAPI, serverName, listenAddr string) error {
+	serverURL := caddyAPI + "/config/apps/http/servers/" + serverName
+	resp, err := http.Get(serverURL) //nolint:noctx
+	if err != nil {
+		return fmt.Errorf("GET %s: %w", serverURL, err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		return nil // already exists
+	}
+
+	// Server path doesn't exist (or config/apps/http doesn't exist yet).
+	// Seed the full apps/http subtree so subsequent route POSTs succeed.
+	type serverNode struct {
+		Listen []string `json:"listen"`
+		Routes []any    `json:"routes"`
+	}
+	type httpNode struct {
+		Servers map[string]serverNode `json:"servers"`
+	}
+	seed, _ := json.Marshal(httpNode{
+		Servers: map[string]serverNode{
+			serverName: {Listen: []string{listenAddr}, Routes: []any{}},
+		},
+	})
+
+	appsHTTPURL := caddyAPI + "/config/apps/http"
+	putResp, err := doPut(appsHTTPURL, seed)
+	if err != nil {
+		return err
+	}
+	defer putResp.Body.Close()
+	if putResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(putResp.Body)
+		return fmt.Errorf("PUT %s returned %d: %s", appsHTTPURL, putResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	ui.Info("Seeded Caddy server %q", serverName)
+	return nil
+}
+
+// doPut issues an HTTP PUT with a JSON body.
+func doPut(url string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(body)) //nolint:noctx
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return http.DefaultClient.Do(req) //nolint:noctx
 }
 
 // pruneStaleRoutes GETs the live routes for serverName, finds any whose @id
