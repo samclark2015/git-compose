@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"git-compose/internal/ui"
@@ -15,6 +16,10 @@ import (
 
 // githubRepo is set at build time via -ldflags "-X main.githubRepo=owner/repo".
 var githubRepo string
+
+// commit is the git commit SHA baked in at build time via -ldflags "-X main.commit=<sha>".
+// Used to detect whether the running binary is already up to date.
+var commit string
 
 // updateCmd implements the self-update command.
 type updateCmd struct {
@@ -28,8 +33,9 @@ func (c *updateCmd) Run() error {
 
 // ghRelease is a minimal GitHub Releases API response.
 type ghRelease struct {
-	TagName string      `json:"tag_name"`
-	Assets  []ghAsset   `json:"assets"`
+	TagName         string    `json:"tag_name"`
+	TargetCommitish string    `json:"target_commitish"`
+	Assets          []ghAsset `json:"assets"`
 }
 
 type ghAsset struct {
@@ -173,6 +179,11 @@ func selfUpdate() error {
 	release, err := fetchRelease(apiURL)
 	if err != nil {
 		return fmt.Errorf("auto-update: fetch release: %w", err)
+	}
+
+	// Skip if the running binary is already at this commit.
+	if commit != "" && release.TargetCommitish != "" && strings.HasPrefix(release.TargetCommitish, commit) {
+		return nil
 	}
 
 	assetName := fmt.Sprintf("git-compose-%s-%s", runtime.GOOS, runtime.GOARCH)
