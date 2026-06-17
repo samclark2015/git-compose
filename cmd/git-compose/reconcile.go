@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,8 +80,6 @@ func runReconcile(repoDir string, routesOnly bool, changedOnly bool) error {
 		// deploy services (serviceFilter == nil means deploy all)
 		if !changedOnly || len(serviceFilter) > 0 {
 			if err := deployServices(repoDir, serviceFilter); err != nil {
-				// deployServices logs per-service failures and continues; a returned
-				// error here means something structural failed.
 				return fmt.Errorf("deploy services: %w", err)
 			}
 		}
@@ -111,6 +110,10 @@ func runReconcile(repoDir string, routesOnly bool, changedOnly bool) error {
 //
 // When changedOnly is non-nil, only services whose name appears in the map are
 // deployed; all others are silently skipped.
+//
+// All services are attempted regardless of individual failures. Any per-service
+// errors are joined and returned together so the caller can report and fail on
+// a partial deployment.
 func deployServices(repoDir string, changedOnly map[string]bool) error {
 	pattern := filepath.Join(repoDir, "services", "*", "compose.yaml")
 	matches, err := filepath.Glob(pattern)
@@ -118,6 +121,8 @@ func deployServices(repoDir string, changedOnly map[string]bool) error {
 		return err
 	}
 	sort.Strings(matches)
+
+	var errs []error
 
 	for _, composeFile := range matches {
 		dir := filepath.Dir(composeFile)
@@ -137,11 +142,13 @@ func deployServices(repoDir string, changedOnly map[string]bool) error {
 			hasSecrets = true
 			data, decErr := decrypt.File(secretsEnc, "dotenv")
 			if decErr != nil {
-				ui.Fail("%s: failed to decrypt secrets, skipping", service)
+				ui.Fail("%s: failed to decrypt secrets", service)
+				errs = append(errs, fmt.Errorf("%s: decrypt secrets: %w", service, decErr))
 				continue
 			}
 			if writeErr := os.WriteFile(secretsPlain, data, 0o600); writeErr != nil {
-				ui.Fail("%s: failed to write secrets.env, skipping", service)
+				ui.Fail("%s: failed to write secrets.env", service)
+				errs = append(errs, fmt.Errorf("%s: write secrets.env: %w", service, writeErr))
 				continue
 			}
 		}
@@ -155,8 +162,12 @@ func deployServices(repoDir string, changedOnly map[string]bool) error {
 			os.Remove(secretsPlain)
 		}
 		if upErr != nil {
-			ui.Fail("%s: failed to deploy, skipping", service)
+			ui.Fail("%s: failed to deploy", service)
+			errs = append(errs, fmt.Errorf("%s: docker compose up: %w", service, upErr))
+		} else {
+			ui.OK("%s", service)
 		}
 	}
-	return nil
+
+	return errors.Join(errs...)
 }
