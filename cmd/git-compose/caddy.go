@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"git-compose/internal/ui"
 )
 
 // ---------------------------------------------------------------------------
@@ -105,7 +107,7 @@ func parsePollConfig() pollConfig {
 // waitForCaddy polls the Caddy Admin API until it responds or the attempt
 // limit is reached.
 func waitForCaddy(caddyAPI string) error {
-	step("Waiting for Caddy Admin API")
+	ui.Step("Waiting for Caddy Admin API")
 	poll := parsePollConfig()
 	url := caddyAPI + "/config/"
 	for i := 1; i <= poll.attempts; i++ {
@@ -113,11 +115,11 @@ func waitForCaddy(caddyAPI string) error {
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode < 500 {
-				ok("Caddy ready")
+				ui.OK("Caddy ready")
 				return nil
 			}
 		}
-		info("waiting (%d/%d)...", i, poll.attempts)
+		ui.Info("waiting (%d/%d)...", i, poll.attempts)
 		time.Sleep(poll.interval)
 	}
 	return fmt.Errorf("timed out waiting for Caddy")
@@ -126,7 +128,7 @@ func waitForCaddy(caddyAPI string) error {
 // applyCaddyRoutes reads all caddy*.json files under services/, builds a full
 // Caddy config, and pushes it to the Caddy Admin API via POST /load.
 func applyCaddyRoutes(repoDir, caddyAPI string) error {
-	step("Applying Caddy routes via API")
+	ui.Step("Applying Caddy routes via API")
 
 	pattern := filepath.Join(repoDir, "services", "*", "caddy*.json")
 	matches, err := filepath.Glob(pattern)
@@ -139,12 +141,12 @@ func applyCaddyRoutes(repoDir, caddyAPI string) error {
 	for _, f := range matches {
 		data, readErr := os.ReadFile(f)
 		if readErr != nil {
-			warn("reading %s: %v", f, readErr)
+			ui.Warn("reading %s: %v", f, readErr)
 			continue
 		}
 		var cj caddyJSON
 		if jsonErr := json.Unmarshal(data, &cj); jsonErr != nil {
-			warn("parsing %s: %v", f, jsonErr)
+			ui.Warn("parsing %s: %v", f, jsonErr)
 			continue
 		}
 		route := caddyRoute{
@@ -196,7 +198,7 @@ func applyCaddyRoutes(repoDir, caddyAPI string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("POST /load returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	ok("Caddy routes applied (%d route(s))", len(routes))
+	ui.OK("Caddy routes applied (%d route(s))", len(routes))
 	return nil
 }
 
@@ -214,7 +216,7 @@ func runRegisterRoute(caddyJSONPath, caddyAPI string) error {
 		return fmt.Errorf("parsing %s: %w", caddyJSONPath, err)
 	}
 
-	info("Registering %s → %s (id: %s)", cj.Hostname, cj.Upstream, cj.ID)
+	ui.Info("Registering %s → %s (id: %s)", cj.Hostname, cj.Upstream, cj.ID)
 
 	// Delete existing route (idempotent; ignore 404)
 	delURL := caddyAPI + "/id/" + cj.ID
@@ -226,9 +228,9 @@ func runRegisterRoute(caddyJSONPath, caddyAPI string) error {
 	delResp.Body.Close()
 	switch delResp.StatusCode {
 	case http.StatusOK:
-		ok("Removed existing route")
+		ui.OK("Removed existing route")
 	case http.StatusNotFound:
-		info("No existing route found")
+		ui.Info("No existing route found")
 	default:
 		return fmt.Errorf("unexpected DELETE status: %d", delResp.StatusCode)
 	}
@@ -267,7 +269,7 @@ func runRegisterRoute(caddyJSONPath, caddyAPI string) error {
 		body, _ := io.ReadAll(postResp.Body)
 		return fmt.Errorf("unexpected POST status %d: %s", postResp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	ok("Created route")
+	ui.OK("Created route")
 	return nil
 }
 
@@ -283,6 +285,6 @@ func runRemoveRoute(routeID, caddyAPI string) error {
 		return fmt.Errorf("DELETE %s: %w", url, err)
 	}
 	defer resp.Body.Close()
-	ok("Removed route: %s", routeID)
+	ui.OK("Removed route: %s", routeID)
 	return nil
 }

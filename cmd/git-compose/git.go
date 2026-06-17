@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"git-compose/internal/ui"
+
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -18,7 +20,7 @@ import (
 // It returns the HEAD hash that was current before the sync (the "old" HEAD), which
 // callers can use to determine what changed.
 func gitSync(repoDir string) (plumbing.Hash, error) {
-	step("Syncing git")
+	ui.Step("Syncing git")
 
 	repo, err := gogit.PlainOpen(repoDir)
 	if err != nil {
@@ -70,7 +72,7 @@ func gitSync(repoDir string) (plumbing.Hash, error) {
 		return plumbing.ZeroHash, fmt.Errorf("git reset --hard: %w", err)
 	}
 
-	ok("HEAD reset to %s", ref.Hash())
+	ui.OK("HEAD reset to %s", ref.Hash())
 	return oldHead, nil
 }
 
@@ -130,7 +132,7 @@ func changedServices(repoDir string, oldHead, newHead plumbing.Hash) (map[string
 
 // installHooks copies every file from scripts/hooks/ into .git/hooks/.
 func installHooks(repoDir string) error {
-	step("Installing git hooks")
+	ui.Step("Installing git hooks")
 	hooksDir := filepath.Join(repoDir, "scripts", "hooks")
 	entries, err := os.ReadDir(hooksDir)
 	if os.IsNotExist(err) {
@@ -152,7 +154,7 @@ func installHooks(repoDir string) error {
 		if err := os.Chmod(dst, 0o755); err != nil {
 			return err
 		}
-		ok("installed %s", e.Name())
+		ui.OK("installed %s", e.Name())
 	}
 	return nil
 }

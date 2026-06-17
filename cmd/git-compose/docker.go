@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"git-compose/internal/ui"
+
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -11,7 +13,7 @@ import (
 
 // ensureNetwork creates the named Docker bridge network if it doesn't exist.
 func ensureNetwork(name string) error {
-	step("Ensuring %s network", name)
+	ui.Step("Ensuring %s network", name)
 
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -22,7 +24,7 @@ func ensureNetwork(name string) error {
 	ctx := context.Background()
 	_, err = cli.NetworkInspect(ctx, name, network.InspectOptions{})
 	if err == nil {
-		info("%s network already exists", name)
+		ui.Info("%s network already exists", name)
 		return nil
 	}
 	if !client.IsErrNotFound(err) {
@@ -31,28 +33,28 @@ func ensureNetwork(name string) error {
 
 	_, err = cli.NetworkCreate(ctx, name, network.CreateOptions{Driver: "bridge"})
 	if err != nil {
-		warn("failed to create %s network", name)
+		ui.Warn("failed to create %s network", name)
 		return err
 	}
-	ok("%s network created", name)
+	ui.OK("%s network created", name)
 	return nil
 }
 
 // pruneImages removes dangling Docker images (equivalent to docker image prune -f).
 func pruneImages() {
-	step("Pruning dangling images")
+	ui.Step("Pruning dangling images")
 
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		warn("docker client for prune: %v", err)
+		ui.Warn("docker client for prune: %v", err)
 		return
 	}
 	defer cli.Close()
 
 	report, err := cli.ImagesPrune(context.Background(), filters.Args{})
 	if err != nil {
-		warn("image prune: %v", err)
+		ui.Warn("image prune: %v", err)
 		return
 	}
-	ok("reclaimed %d bytes across %d image(s)", report.SpaceReclaimed, len(report.ImagesDeleted))
+	ui.OK("reclaimed %d bytes across %d image(s)", report.SpaceReclaimed, len(report.ImagesDeleted))
 }

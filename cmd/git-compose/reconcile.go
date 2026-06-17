@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"sort"
 
+	"git-compose/internal/ui"
+
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/getsops/sops/v3/decrypt"
 )
 
 func runReconcile(repoDir string, routesOnly bool, changedOnly bool) error {
-	section("Reconciling homelab")
+	ui.Section("Reconciling homelab")
 
 	caddyAPI := envOr("CADDY_API", defaultCaddyAPI)
 
@@ -28,13 +30,13 @@ func runReconcile(repoDir string, routesOnly bool, changedOnly bool) error {
 		// install git hooks
 		if err := installHooks(repoDir); err != nil {
 			// non-fatal: warn and continue
-			warn("installing hooks: %v", err)
+			ui.Warn("installing hooks: %v", err)
 		}
 
 		// ensure caddy-net network
 		caddyNet := envOr("CADDY_NET", defaultCaddyNet)
 		if err := ensureNetwork(caddyNet); err != nil {
-			warn("ensure network: %v", err)
+			ui.Warn("ensure network: %v", err)
 		}
 
 		// Determine which services to deploy.
@@ -54,15 +56,15 @@ func runReconcile(repoDir string, routesOnly bool, changedOnly bool) error {
 			newHead := headRef.Hash()
 
 			if oldHead == newHead {
-				info("no new commits; skipping service deployment")
+				ui.Info("no new commits; skipping service deployment")
 			} else {
 				var diffErr error
 				serviceFilter, diffErr = changedServices(repoDir, oldHead, newHead)
 				if diffErr != nil {
-					warn("could not compute changed services, deploying all: %v", diffErr)
+					ui.Warn("could not compute changed services, deploying all: %v", diffErr)
 					serviceFilter = nil
 				} else if len(serviceFilter) == 0 {
-					info("no services changed; skipping service deployment")
+					ui.Info("no services changed; skipping service deployment")
 				}
 			}
 		}
@@ -79,12 +81,12 @@ func runReconcile(repoDir string, routesOnly bool, changedOnly bool) error {
 
 	// wait for Caddy Admin API
 	if err := waitForCaddy(caddyAPI); err != nil {
-		warn("Caddy API never became ready: %v", err)
+		ui.Warn("Caddy API never became ready: %v", err)
 	}
 
 	// build + apply Caddy config
 	if err := applyCaddyRoutes(repoDir, caddyAPI); err != nil {
-		warn("applying Caddy routes: %v", err)
+		ui.Warn("applying Caddy routes: %v", err)
 	}
 
 	if !routesOnly {
@@ -92,7 +94,7 @@ func runReconcile(repoDir string, routesOnly bool, changedOnly bool) error {
 		pruneImages()
 	}
 
-	ok("Done")
+	ui.OK("Done")
 	return nil
 }
 
@@ -118,7 +120,7 @@ func deployServices(repoDir string, changedOnly map[string]bool) error {
 			continue
 		}
 
-		step("%s", service)
+		ui.Step("%s", service)
 
 		secretsEnc := filepath.Join(dir, "secrets.env.enc")
 		secretsPlain := filepath.Join(dir, "secrets.env")
@@ -128,11 +130,11 @@ func deployServices(repoDir string, changedOnly map[string]bool) error {
 			hasSecrets = true
 			data, decErr := decrypt.File(secretsEnc, "dotenv")
 			if decErr != nil {
-				fail("%s: failed to decrypt secrets, skipping", service)
+				ui.Fail("%s: failed to decrypt secrets, skipping", service)
 				continue
 			}
 			if writeErr := os.WriteFile(secretsPlain, data, 0o600); writeErr != nil {
-				fail("%s: failed to write secrets.env, skipping", service)
+				ui.Fail("%s: failed to write secrets.env, skipping", service)
 				continue
 			}
 		}
@@ -146,9 +148,8 @@ func deployServices(repoDir string, changedOnly map[string]bool) error {
 			os.Remove(secretsPlain)
 		}
 		if upErr != nil {
-			fail("%s: failed to deploy, skipping", service)
+			ui.Fail("%s: failed to deploy, skipping", service)
 		}
 	}
 	return nil
 }
-
