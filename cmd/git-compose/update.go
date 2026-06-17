@@ -8,8 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
-	"time"
 
 	"git-compose/internal/ui"
 )
@@ -17,8 +18,7 @@ import (
 // githubRepo is set at build time via -ldflags "-X main.githubRepo=owner/repo".
 var githubRepo string
 
-// buildTime is the RFC3339 build timestamp baked in at build time via -ldflags "-X main.buildTime=<time>".
-// Used to detect whether the running binary is already up to date.
+// buildTime is kept for backwards compatibility but no longer used for update checks.
 var buildTime string
 
 // updateCmd implements the self-update command.
@@ -194,6 +194,26 @@ func fetchTagCommit(refURL string) (string, error) {
 	return result.Object.SHA, nil
 }
 
+// compareCalVer returns true if b is strictly newer than a.
+// Both must be "YYYY.MM.B" strings; any parse error treats that version as older.
+func compareCalVer(a, b string) bool {
+	parse := func(s string) [3]int {
+		parts := strings.SplitN(s, ".", 3)
+		var v [3]int
+		for i := 0; i < 3 && i < len(parts); i++ {
+			v[i], _ = strconv.Atoi(parts[i])
+		}
+		return v
+	}
+	av, bv := parse(a), parse(b)
+	for i := range av {
+		if bv[i] != av[i] {
+			return bv[i] > av[i]
+		}
+	}
+	return false
+}
+
 // selfUpdate checks for a newer release, downloads it if available, replaces
 // the running binary, and re-execs the new binary with the same arguments so
 // that the calling reconcile loop runs under the updated version.
@@ -211,13 +231,9 @@ func selfUpdate() error {
 		return fmt.Errorf("auto-update: fetch release: %w", err)
 	}
 
-	// Skip if the running binary was built after the release was published.
-	if buildTime != "" && release.PublishedAt != "" {
-		bt, err1 := time.Parse(time.RFC3339, buildTime)
-		rt, err2 := time.Parse(time.RFC3339, release.PublishedAt)
-		if err1 == nil && err2 == nil && !bt.Before(rt) {
-			return nil
-		}
+	// Skip if the running version is already at or ahead of the release.
+	if version != "dev" && !compareCalVer(version, release.TagName) {
+		return nil
 	}
 
 	assetName := fmt.Sprintf("git-compose-%s-%s", runtime.GOOS, runtime.GOARCH)

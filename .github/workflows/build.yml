@@ -30,7 +30,7 @@ jobs:
           GOOS: linux
           GOARCH: arm64
           CGO_ENABLED: "0"
-        run: go build -trimpath -ldflags="-s -w -X main.githubRepo=${{ github.repository }} -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o git-compose-linux-arm64 ./cmd/git-compose
+        run: go build -trimpath -ldflags="-s -w -X main.githubRepo=${{ github.repository }} -X main.version=${{ steps.calver.outputs.tag }}" -o git-compose-linux-arm64 ./cmd/git-compose
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -39,9 +39,19 @@ jobs:
           path: git-compose-linux-arm64
           retention-days: 30
 
+      - name: Generate CalVer tag
+        if: github.ref == 'refs/heads/main'
+        id: calver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base=$(date -u +%Y.%m)
+          count=$(gh api "repos/${{ github.repository }}/git/refs/tags" --jq "[.[].ref | select(startswith(\"refs/tags/$base.\"))] | length")
+          echo "tag=$base.$((count + 1))" >> "$GITHUB_OUTPUT"
+
       - name: Create release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
+          tag_name: ${{ steps.calver.outputs.tag }}
           files: git-compose-linux-arm64

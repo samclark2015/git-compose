@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/alecthomas/kong"
 )
 
@@ -11,6 +13,9 @@ const (
 	defaultPollAttempts = "15"
 	defaultPollInterval = "2s"
 )
+
+// version is set at build time via -ldflags "-X main.version=YYYY.MM.B".
+var version = "dev"
 
 // ---------------------------------------------------------------------------
 // command structs
@@ -44,6 +49,13 @@ func (c *removeRouteCmd) Run() error {
 	return runRemoveRoute(c.RouteID, c.CaddyAPI)
 }
 
+type versionCmd struct{}
+
+func (c *versionCmd) Run() error {
+	fmt.Println(version)
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // root CLI
 // ---------------------------------------------------------------------------
@@ -53,6 +65,7 @@ var cli struct {
 	RegisterRoute registerRouteCmd `cmd:"" name:"register-route" help:"Upsert a single Caddy route from a caddy.json file."`
 	RemoveRoute   removeRouteCmd   `cmd:"" name:"remove-route"   help:"Delete a Caddy route by id."`
 	Update        updateCmd        `cmd:"" help:"Update git-compose to the latest GitHub release."`
+	Version       versionCmd       `cmd:"" help:"Print the current version."`
 }
 
 func main() {
