@@ -1,11 +1,7 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"strings"
-
-	"git-compose/internal/cli"
+	"github.com/alecthomas/kong"
 )
 
 const (
@@ -18,69 +14,53 @@ const (
 	defaultPollInterval  = "2s"
 )
 
+// ---------------------------------------------------------------------------
+// command structs
+// ---------------------------------------------------------------------------
+
+type reconcileCmd struct {
+	RepoDir     string `arg:"" optional:"" default:"/opt/homelab" env:"REPO_DIR" help:"Path to the homelab git repo."`
+	RoutesOnly  bool   `name:"routes-only"  help:"Skip git sync, services, and image prune; only apply Caddy routes."`
+	ChangedOnly bool   `name:"changed-only" help:"Only deploy services whose files changed since the last reconcile."`
+}
+
+func (c *reconcileCmd) Run() error {
+	return runReconcile(c.RepoDir, c.RoutesOnly, c.ChangedOnly)
+}
+
+type registerRouteCmd struct {
+	CaddyJSON string `arg:"" name:"caddy.json" help:"Path to the caddy.json file."`
+	CaddyAPI  string `env:"CADDY_API" default:"http://127.0.0.1:2019" help:"Caddy Admin API base URL."`
+}
+
+func (c *registerRouteCmd) Run() error {
+	return runRegisterRoute(c.CaddyJSON, c.CaddyAPI)
+}
+
+type removeRouteCmd struct {
+	RouteID  string `arg:"" name:"route-id" help:"ID of the Caddy route to delete."`
+	CaddyAPI string `env:"CADDY_API" default:"http://127.0.0.1:2019" help:"Caddy Admin API base URL."`
+}
+
+func (c *removeRouteCmd) Run() error {
+	return runRemoveRoute(c.RouteID, c.CaddyAPI)
+}
+
+// ---------------------------------------------------------------------------
+// root CLI
+// ---------------------------------------------------------------------------
+
+var cli struct {
+	Reconcile     reconcileCmd     `cmd:"" help:"Sync repo and deploy all services."`
+	RegisterRoute registerRouteCmd `cmd:"" name:"register-route" help:"Upsert a single Caddy route from a caddy.json file."`
+	RemoveRoute   removeRouteCmd   `cmd:"" name:"remove-route"   help:"Delete a Caddy route by id."`
+}
+
 func main() {
-	app := &cli.App{
-		Binary: "git-compose",
-		EnvVars: []cli.EnvVar{
-			{Name: "REPO_DIR", Description: "path to the homelab git repo", Default: defaultRepoDir},
-			{Name: "CADDY_API", Description: "Caddy Admin API base URL", Default: defaultCaddyAPI},
-			{Name: "SOPS_AGE_KEY_FILE", Description: "path to the SOPS age key file", Default: defaultSopsKeyFile},
-			{Name: "GIT_DEPLOY_KEY", Description: "path to the SSH deploy key", Default: defaultDeployKeyFile},
-			{Name: "CADDY_NET", Description: "Docker network name for Caddy", Default: defaultCaddyNet},
-			{Name: "CADDY_POLL_ATTEMPTS", Description: "number of attempts to wait for Caddy API", Default: defaultPollAttempts},
-			{Name: "CADDY_POLL_INTERVAL", Description: "interval between Caddy poll attempts, e.g. 2s", Default: defaultPollInterval},
-		},
-	}
-
-	app.Register(&cli.Command{
-		Name:        "reconcile",
-		Usage:       "[--routes-only] [--changed-only] [repo-dir]",
-		Description: "sync repo and deploy all services",
-		Run: func(args []string) error {
-			repoDir := envOr("REPO_DIR", defaultRepoDir)
-			routesOnly := false
-			changedOnly := false
-			for _, arg := range args {
-				switch arg {
-				case "--routes-only":
-					routesOnly = true
-				case "--changed-only":
-					changedOnly = true
-				default:
-					if !strings.HasPrefix(arg, "-") {
-						repoDir = arg
-					}
-				}
-			}
-			return runReconcile(repoDir, routesOnly, changedOnly)
-		},
-	})
-
-	app.Register(&cli.Command{
-		Name:        "register-route",
-		Usage:       "<caddy.json>",
-		Description: "upsert a single Caddy route from a caddy.json file",
-		Run: func(args []string) error {
-			if len(args) < 1 {
-				return fmt.Errorf("usage: git-compose register-route <caddy.json>")
-			}
-			caddyAPI := envOr("CADDY_API", defaultCaddyAPI)
-			return runRegisterRoute(args[0], caddyAPI)
-		},
-	})
-
-	app.Register(&cli.Command{
-		Name:        "remove-route",
-		Usage:       "<route-id>",
-		Description: "delete a Caddy route by id",
-		Run: func(args []string) error {
-			if len(args) < 1 {
-				return fmt.Errorf("usage: git-compose remove-route <route-id>")
-			}
-			caddyAPI := envOr("CADDY_API", defaultCaddyAPI)
-			return runRemoveRoute(args[0], caddyAPI)
-		},
-	})
-
-	app.Run(os.Args[1:])
+	ctx := kong.Parse(&cli,
+		kong.Name("git-compose"),
+		kong.Description("GitOps deployment tool for homelab services."),
+		kong.UsageOnError(),
+	)
+	ctx.FatalIfErrorf(ctx.Run())
 }
