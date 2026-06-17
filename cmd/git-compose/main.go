@@ -54,6 +54,7 @@ var cli struct {
 	Reconcile     reconcileCmd     `cmd:"" help:"Sync repo and deploy all services."`
 	RegisterRoute registerRouteCmd `cmd:"" name:"register-route" help:"Upsert a single Caddy route from a caddy.json file."`
 	RemoveRoute   removeRouteCmd   `cmd:"" name:"remove-route"   help:"Delete a Caddy route by id."`
+	Update        updateCmd        `cmd:"" help:"Update git-compose to the latest GitHub release."`
 }
 
 func main() {
