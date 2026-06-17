@@ -164,6 +164,36 @@ func downloadTo(url string, w io.Writer) error {
 	return err
 }
 
+// fetchTagCommit returns the commit SHA that a git tag ref points to.
+func fetchTagCommit(refURL string) (string, error) {
+	req, err := http.NewRequest(http.MethodGet, refURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("ref API returned %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Object struct {
+			SHA string `json:"sha"`
+		} `json:"object"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	return result.Object.SHA, nil
+}
+
 // selfUpdate checks for a newer release, downloads it if available, replaces
 // the running binary, and re-execs the new binary with the same arguments so
 // that the calling reconcile loop runs under the updated version.
@@ -181,9 +211,13 @@ func selfUpdate() error {
 		return fmt.Errorf("auto-update: fetch release: %w", err)
 	}
 
-	// Skip if the running binary is already at this commit.
-	if commit != "" && release.TargetCommitish != "" && strings.HasPrefix(release.TargetCommitish, commit) {
-		return nil
+	// Skip if the running binary is already at the commit the release tag points to.
+	if commit != "" {
+		refURL := fmt.Sprintf("https://api.github.com/repos/%s/git/ref/tags/%s", githubRepo, release.TagName)
+		tagCommit, err := fetchTagCommit(refURL)
+		if err == nil && strings.HasPrefix(tagCommit, commit) {
+			return nil
+		}
 	}
 
 	assetName := fmt.Sprintf("git-compose-%s-%s", runtime.GOOS, runtime.GOARCH)
