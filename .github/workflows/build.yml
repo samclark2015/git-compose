@@ -25,6 +25,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Generate CalVer tag
+        id: calver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base=$(date -u +%Y.%m)
+          count=$(gh api "repos/${{ github.repository }}/git/refs/tags" --jq "[.[].ref | select(startswith(\"refs/tags/$base.\"))] | length")
+          echo "tag=$base.$((count + 1))" >> "$GITHUB_OUTPUT"
+
       - name: Build
         env:
           GOOS: linux
@@ -38,16 +47,6 @@ jobs:
           name: git-compose-linux-arm64
           path: git-compose-linux-arm64
           retention-days: 30
-
-      - name: Generate CalVer tag
-        if: github.ref == 'refs/heads/main'
-        id: calver
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          base=$(date -u +%Y.%m)
-          count=$(gh api "repos/${{ github.repository }}/git/refs/tags" --jq "[.[].ref | select(startswith(\"refs/tags/$base.\"))] | length")
-          echo "tag=$base.$((count + 1))" >> "$GITHUB_OUTPUT"
 
       - name: Create release
         if: github.ref == 'refs/heads/main'
