@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"syscall"
 
@@ -83,8 +84,9 @@ func runUpdate(checkOnly bool, tag string) error {
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
 
-	// Download to a temp file next to the binary so the rename is atomic.
-	tmp, err := os.CreateTemp(os.TempDir(), "git-compose-update-*")
+	// Download to a temp file next to the binary so the rename is atomic
+	// (same filesystem as the target).
+	tmp, err := os.CreateTemp(filepath.Dir(self), "git-compose-update-*")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
@@ -192,7 +194,7 @@ func selfUpdate() error {
 		return fmt.Errorf("auto-update: resolve executable: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(os.TempDir(), "git-compose-update-*")
+	tmp, err := os.CreateTemp(filepath.Dir(self), "git-compose-update-*")
 	if err != nil {
 		return fmt.Errorf("auto-update: create temp file: %w", err)
 	}
