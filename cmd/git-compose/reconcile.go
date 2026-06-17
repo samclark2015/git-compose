@@ -134,7 +134,7 @@ func deployServices(repoDir string, changedOnly map[string]bool) error {
 
 		ui.Step("%s", service)
 
-		secretsEnc := filepath.Join(dir, "secrets.env.enc")
+		secretsEnc := filepath.Join(dir, "secrets.enc.env")
 		secretsPlain := filepath.Join(dir, "secrets.env")
 		hasSecrets := false
 
