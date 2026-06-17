@@ -42,8 +42,8 @@ type caddyServer struct {
 }
 
 type caddyRoute struct {
-	Match  []caddyMatch  `json:"match"`
-	Handle []caddyHandle `json:"handle"`
+	Match  []caddyMatch     `json:"match,omitempty"`
+	Handle []json.RawMessage `json:"handle"`
 }
 
 type caddyMatch struct {
@@ -152,22 +152,37 @@ func applyCaddyRoutes(repoDir, caddyAPI string) error {
 			ui.Warn("parsing %s: %v", f, jsonErr)
 			continue
 		}
-		route := caddyRoute{
-			Match: []caddyMatch{{Host: []string{cj.Hostname}}},
-			Handle: []caddyHandle{{
-				Handler:   "reverse_proxy",
-				Upstreams: []caddyUpstream{{Dial: cj.Upstream}},
-				Headers: &caddyHeaders{
-					Request: &caddyHeaderOps{
-						Set: map[string][]string{
-							"X-Forwarded-Proto": {"https"},
-						},
+		handle := caddyHandle{
+			Handler:   "reverse_proxy",
+			Upstreams: []caddyUpstream{{Dial: cj.Upstream}},
+			Headers: &caddyHeaders{
+				Request: &caddyHeaderOps{
+					Set: map[string][]string{
+						"X-Forwarded-Proto": {"https"},
 					},
 				},
-			}},
+			},
+		}
+		handleRaw, marshalErr := json.Marshal(handle)
+		if marshalErr != nil {
+			ui.Warn("marshalling handle for %s: %v", f, marshalErr)
+			continue
+		}
+		route := caddyRoute{
+			Match:  []caddyMatch{{Host: []string{cj.Hostname}}},
+			Handle: []json.RawMessage{handleRaw},
 		}
 		routes = append(routes, route)
 	}
+
+	// Append a catch-all route that returns 404 for any unregistered hostname.
+	catchAllHandle, _ := json.Marshal(map[string]interface{}{
+		"handler":     "static_response",
+		"status_code": 404,
+	})
+	routes = append(routes, caddyRoute{
+		Handle: []json.RawMessage{catchAllHandle},
+	})
 
 	caddyAdminListen := envOr("CADDY_ADMIN_LISTEN", ":2019")
 	caddyHTTPListen := envOr("CADDY_HTTP_LISTEN", ":80")
