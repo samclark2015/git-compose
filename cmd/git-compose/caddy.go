@@ -315,15 +315,21 @@ func upsertCaddyRoute(cj caddyJSON, caddyAPI, serverName string) error {
 		return err
 	}
 
-	postURL := caddyAPI + "/config/apps/http/servers/" + serverName + "/routes/"
-	postResp, err := http.Post(postURL, "application/json", bytes.NewReader(payload)) //nolint:noctx
+	// Insert at index 0 so managed routes are evaluated before any static
+	// routes from the Caddyfile (notably a catch-all). Caddy's admin API
+	// treats PUT on an array index as an insert, not a replace, so each
+	// upsert prepends to the routes array. Each managed route sets
+	// terminal:true, so host matches short-circuit before reaching whatever
+	// the Caddyfile defined.
+	putURL := caddyAPI + "/config/apps/http/servers/" + serverName + "/routes/0"
+	putResp, err := doPut(putURL, payload)
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", postURL, err)
+		return fmt.Errorf("PUT %s: %w", putURL, err)
 	}
-	defer postResp.Body.Close()
-	if postResp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(postResp.Body)
-		return fmt.Errorf("POST %s returned %d: %s", postURL, postResp.StatusCode, strings.TrimSpace(string(body)))
+	defer putResp.Body.Close()
+	if putResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(putResp.Body)
+		return fmt.Errorf("PUT %s returned %d: %s", putURL, putResp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	ui.Info("Upserted route: %s → %s", cj.Hostname, cj.Upstream)
 	return nil
